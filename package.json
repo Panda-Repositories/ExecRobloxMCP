@@ -1,6 +1,6 @@
 {
   "name": "RobloxMCP",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server that controls Roblox via executor WebSocket bridge",
   "author": "SkieHacker",
   "license": "MIT",

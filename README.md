@@ -18,12 +18,33 @@ The AI gets a clean tool API. The executor handles every privileged action. The 
 
 ## Core Features
 
-- **`execute_lua`** — run arbitrary Lua in the executor environment. Full power.
-- **Player tools** — list players, inspect, teleport, kick.
-- **World tools** — list workspace, find parts by name/class, spawn parts, destroy instances.
-- **`describe_view`** — AI vision substitute: camera state, on-screen players with screen coords + distance + occlusion check, nearby parts sorted by distance. Works on every executor.
+### Code & state
+- **`execute_lua`** — run arbitrary Lua in the executor environment. Full power. Every call is auto-recorded.
+- **`dry_run_lua`** — compile-check Lua without running. Catch syntax errors before execution.
+- **`get_recorded_scripts`** — replay history of every `execute_lua` call (code, result, error, duration). The AI builds its own snippet library.
+- **`decompile_script`** — pull Lua source from any LocalScript / ModuleScript / Script. Uses the executor's `decompile` API.
+
+### Vision (the moat)
+- **`describe_view`** — AI vision substitute: camera state, on-screen players (screen coords + distance + occlusion + team + tool equipped + health), nearby parts sorted by distance, **visible UI text** with absolute screen positions. Works on every executor, no image data.
 - **`capture_screenshot`** — viewport → base64 PNG via `CaptureService`. Image content block returned so vision-capable models (Gemini, Claude) see it directly. Falls back to content ID when executor lacks file APIs.
-- **Dev console capture** — all `print` / `warn` / `error` output from the game and the script is mirrored to a ring buffer. AI fetches with `get_dev_console_logs`.
+
+### Players & world
+- Player tools — `get_players`, `get_player_info`, `teleport_player`, `kick_player`.
+- World tools — `get_workspace_children`, `find_parts`, `spawn_part`, `destroy_instance`.
+- **`query_instances`** — search the entire DataModel with name/class/IsA/attribute filters. Way more flexible than `find_parts`.
+
+### Remotes (the RemoteSpy moat)
+- **`list_remotes`** — every RemoteEvent / RemoteFunction / UnreliableRemoteEvent / Bindable in the DataModel.
+- **`fire_remote`** — FireServer or InvokeServer any remote by path with arbitrary args.
+- **`start_remote_spy` / `stop_remote_spy` / `get_remote_log` / `clear_remote_log`** — hook `__namecall` via `hookmetamethod`, log every fired/invoked remote with flattened args (Instances become `{__type, path, class}`). Works on any exec with `getrawmetatable + hookmetamethod + newcclosure`.
+
+### Diffing & dev console
+- **`take_state_snapshot` / `diff_state_from`** — capture flat instance snapshots, diff later: added / removed / moved (>0.01 stud) / reclassed. AI detects events without polling.
+- **`get_dev_console_logs` / `clear_dev_console_logs`** — every `print` / `warn` / `error` from the game and script is mirrored to a ring buffer. AI reads its own errors and self-corrects.
+
+### Infra
+- **HTTP transport** — persistent Node server that survives AI-client restarts. Stdio transport also supported.
+- **Live dashboard** — `http://127.0.0.1:8766/` shows connection state, recent tool calls, snapshot count, uptime.
 - **Auto-reconnect** — Lua client reconnects with exponential backoff on drop.
 - **Localhost-only** — WS bridge and MCP HTTP endpoint are intended for `127.0.0.1` use. Don't expose the WS port across the network without adding your own auth in front.
 
@@ -188,9 +209,13 @@ Your **server terminal** will also print `[bridge] incoming connection from ::1`
 - *"Run this Lua: `return Workspace:GetChildren()`"*
 - *"Show me the last 50 dev console errors."*
 
+### Dashboard
+
+Open `http://127.0.0.1:8766/` in your browser. Auto-refreshing live view: Roblox connection state, every tool call with duration + status, snapshot count, uptime.
+
 ### Health check
 
-In any shell: `curl http://127.0.0.1:8766/health` → `{"ok":true,"roblox_connected":true|false}`.
+In any shell: `curl http://127.0.0.1:8766/health` → `{"ok":true,"roblox_connected":true|false}`. Programmatic JSON via `/api/status` and recent tool calls via `/api/tool-log?limit=50`.
 
 ### Stopping it
 

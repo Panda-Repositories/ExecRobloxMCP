@@ -7,10 +7,33 @@ export interface LogEntry {
   message: string;
 }
 
+export interface RecordedScript {
+  ts: number;
+  code: string;
+  ok: boolean;
+  result?: any;
+  error?: string;
+  ms: number;
+}
+
+export interface ToolCallEntry {
+  ts: number;
+  tool: string;
+  ok: boolean;
+  ms: number;
+  error?: string;
+}
+
 interface PendingReq {
   resolve: (value: any) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+interface SnapshotEntry {
+  rootPath: string;
+  data: any[];
+  ts: number;
 }
 
 export class RobloxBridge {
@@ -19,6 +42,12 @@ export class RobloxBridge {
   private pending = new Map<string, PendingReq>();
   private logBuffer: LogEntry[] = [];
   private readonly maxLogs = 500;
+
+  private snapshots = new Map<string, SnapshotEntry>();
+  private recordedScripts: RecordedScript[] = [];
+  private readonly maxScripts = 200;
+  private toolCalls: ToolCallEntry[] = [];
+  private readonly maxToolCalls = 500;
 
   constructor(private port: number) {
     this.wss = new WebSocketServer({ port });
@@ -125,5 +154,41 @@ export class RobloxBridge {
 
   clearLogs() {
     this.logBuffer = [];
+  }
+
+  storeSnapshot(rootPath: string, data: any[]): string {
+    const id = randomUUID();
+    this.snapshots.set(id, { rootPath, data, ts: Date.now() });
+    if (this.snapshots.size > 50) {
+      const oldest = [...this.snapshots.entries()].sort((a, b) => a[1].ts - b[1].ts)[0];
+      if (oldest) this.snapshots.delete(oldest[0]);
+    }
+    return id;
+  }
+
+  getSnapshot(id: string): SnapshotEntry | undefined {
+    return this.snapshots.get(id);
+  }
+
+  snapshotCount() {
+    return this.snapshots.size;
+  }
+
+  recordScript(code: string, ok: boolean, result: any, error: string | undefined, ms: number) {
+    this.recordedScripts.push({ ts: Date.now(), code, ok, result: ok ? result : undefined, error, ms });
+    if (this.recordedScripts.length > this.maxScripts) this.recordedScripts.shift();
+  }
+
+  getRecordedScripts(limit: number): RecordedScript[] {
+    return this.recordedScripts.slice(-limit);
+  }
+
+  logToolCall(tool: string, ok: boolean, ms: number, error?: string) {
+    this.toolCalls.push({ ts: Date.now(), tool, ok, ms, error });
+    if (this.toolCalls.length > this.maxToolCalls) this.toolCalls.shift();
+  }
+
+  getToolCalls(limit: number): ToolCallEntry[] {
+    return this.toolCalls.slice(-limit);
   }
 }

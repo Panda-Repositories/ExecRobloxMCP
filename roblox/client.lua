@@ -21,6 +21,13 @@ local readfile_fn  = (rawget(getfenv(), "readfile")  or readfile)
 local isfile_fn    = (rawget(getfenv(), "isfile")    or isfile)
 local getcustomasset_fn = (rawget(getfenv(), "getcustomasset") or getcustomasset or (syn and syn.getcustomasset) or getsynasset)
 
+local decompile_fn = (rawget(getfenv(), "decompile") or decompile or (syn and syn.decompile))
+local hookmetamethod_fn = (rawget(getfenv(), "hookmetamethod") or hookmetamethod)
+local getrawmetatable_fn = (rawget(getfenv(), "getrawmetatable") or getrawmetatable)
+local setreadonly_fn = (rawget(getfenv(), "setreadonly") or setreadonly)
+local newcclosure_fn = (rawget(getfenv(), "newcclosure") or newcclosure or function(f) return f end)
+local getnamecallmethod_fn = (rawget(getfenv(), "getnamecallmethod") or getnamecallmethod)
+
 local function b64encode(data)
     local b = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     return ((data:gsub('.', function(x)
@@ -63,6 +70,15 @@ local function resolvePath(path)
     return cur
 end
 
+local function resolvePathFull(path)
+    if not path or path == "" then return game end
+    local cur = game
+    for part in string.gmatch(path, "[^.]+") do
+        cur = cur:FindFirstChild(part); if not cur then return nil end
+    end
+    return cur
+end
+
 local function partInfo(inst)
     local info = { name = inst.Name, class = inst.ClassName, path = instancePath(inst) }
     if inst:IsA("BasePart") then
@@ -80,6 +96,56 @@ local function hexToColor3(hex)
         tonumber(string.sub(hex,1,2),16) or 0,
         tonumber(string.sub(hex,3,4),16) or 0,
         tonumber(string.sub(hex,5,6),16) or 0)
+end
+
+local function equippedTool(char)
+    if not char then return nil end
+    for _, c in ipairs(char:GetChildren()) do
+        if c:IsA("Tool") then return c.Name end
+    end
+    return nil
+end
+
+local function flattenArg(v, depth)
+    depth = depth or 0
+    if depth > 5 then return "<too deep>" end
+    local t = typeof(v)
+    if t == "Instance" then
+        return { __type = "Instance", path = v:GetFullName(), class = v.ClassName }
+    elseif t == "Vector3" then
+        return { __type = "Vector3", x = v.X, y = v.Y, z = v.Z }
+    elseif t == "Vector2" then
+        return { __type = "Vector2", x = v.X, y = v.Y }
+    elseif t == "CFrame" then
+        return { __type = "CFrame", pos = { v.X, v.Y, v.Z } }
+    elseif t == "Color3" then
+        return { __type = "Color3", r = v.R, g = v.G, b = v.B }
+    elseif t == "EnumItem" then
+        return { __type = "EnumItem", name = tostring(v) }
+    elseif t == "BrickColor" then
+        return { __type = "BrickColor", name = v.Name }
+    elseif t == "table" then
+        local o = {}
+        local n = 0
+        for k, val in pairs(v) do
+            n = n + 1
+            if n > 50 then o.__truncated = true; break end
+            o[tostring(k)] = flattenArg(val, depth + 1)
+        end
+        return o
+    elseif t == "string" or t == "number" or t == "boolean" or t == "nil" then
+        return v
+    else
+        return { __type = t, str = tostring(v) }
+    end
+end
+
+local function flattenArgList(args)
+    local out = {}
+    for i = 1, select("#", table.unpack(args)) do
+        out[i] = flattenArg(args[i])
+    end
+    return out
 end
 
 local currentWs = nil
@@ -105,6 +171,12 @@ actions.exec = function(msg)
     if #results == 0 then return true, nil end
     if #results == 1 then return true, results[1] end
     return true, results
+end
+
+actions.dry_run_lua = function(msg)
+    local fn, err = loadstring(msg.code)
+    if not fn then return true, { ok = false, error = tostring(err) } end
+    return true, { ok = true }
 end
 
 actions.get_players = function()
@@ -135,6 +207,7 @@ actions.get_player_info = function(msg)
         walk_speed = hum and hum.WalkSpeed or nil,
         position = hrp and vec3(hrp.Position) or nil,
         in_character = char ~= nil,
+        tool_equipped = equippedTool(char),
     }
 end
 
@@ -186,6 +259,37 @@ actions.find_parts = function(msg)
     return true, out
 end
 
+actions.query_instances = function(msg)
+    local root
+    if msg.root_path then
+        root = resolvePathFull(msg.root_path)
+        if not root then return false, "root_path not found" end
+    else
+        root = game
+    end
+    local max = msg.max or 100
+    local nameMatch = msg.name_match and string.lower(msg.name_match) or nil
+    local out = {}
+    for _, inst in ipairs(root:GetDescendants()) do
+        local pass = true
+        if pass and nameMatch and not string.find(string.lower(inst.Name), nameMatch, 1, true) then pass = false end
+        if pass and msg.class_name and inst.ClassName ~= msg.class_name then pass = false end
+        if pass and msg.is_a then
+            local okIs, isInst = pcall(function() return inst:IsA(msg.is_a) end)
+            if not okIs or not isInst then pass = false end
+        end
+        if pass and msg.has_attribute then
+            local okA, attrs = pcall(function() return inst:GetAttributes() end)
+            if not okA or attrs[msg.has_attribute] == nil then pass = false end
+        end
+        if pass then
+            table.insert(out, partInfo(inst))
+            if #out >= max then break end
+        end
+    end
+    return true, out
+end
+
 actions.spawn_part = function(msg)
     local part = Instance.new("Part")
     part.Name = msg.name or "MCP_Part"
@@ -206,7 +310,7 @@ end
 
 actions.destroy_instance = function(msg)
     local target
-    if msg.path then target = resolvePath(msg.path)
+    if msg.path then target = resolvePathFull(msg.path) or resolvePath(msg.path)
     elseif msg.name then
         for _, inst in ipairs(Workspace:GetDescendants()) do
             if inst.Name == msg.name then target = inst; break end
@@ -217,6 +321,172 @@ actions.destroy_instance = function(msg)
     return true, { destroyed = path }
 end
 
+actions.decompile_script = function(msg)
+    if not decompile_fn then return false, "executor does not expose `decompile`" end
+    local inst = resolvePathFull(msg.path)
+    if not inst then return false, "instance not found" end
+    if not (inst:IsA("LocalScript") or inst:IsA("ModuleScript") or inst:IsA("Script")) then
+        return false, "instance is not a script: " .. inst.ClassName
+    end
+    local ok, src = pcall(decompile_fn, inst)
+    if not ok then return false, "decompile failed: " .. tostring(src) end
+    if type(src) ~= "string" then return false, "decompile returned non-string" end
+    return true, { path = instancePath(inst), class = inst.ClassName, source = src, length = #src }
+end
+
+actions.list_remotes = function(msg)
+    local root = msg.root_path and resolvePathFull(msg.root_path) or game
+    if not root then return false, "root_path not found" end
+    local include_bindables = msg.include_bindables ~= false
+    local max = msg.max or 500
+    local out = {}
+    for _, inst in ipairs(root:GetDescendants()) do
+        local cls = inst.ClassName
+        local match = cls == "RemoteEvent" or cls == "RemoteFunction" or cls == "UnreliableRemoteEvent"
+        if not match and include_bindables then
+            match = cls == "BindableEvent" or cls == "BindableFunction"
+        end
+        if match then
+            table.insert(out, { name = inst.Name, class = cls, path = instancePath(inst) })
+            if #out >= max then break end
+        end
+    end
+    return true, out
+end
+
+actions.fire_remote = function(msg)
+    local inst = resolvePathFull(msg.path)
+    if not inst then return false, "remote not found" end
+    local args = msg.args or {}
+    local cls = inst.ClassName
+
+    if msg.invoke then
+        if cls == "RemoteFunction" then
+            local ok, results = pcall(function() return { inst:InvokeServer(table.unpack(args)) } end)
+            if not ok then return false, tostring(results) end
+            return true, { returned = flattenArgList(results) }
+        elseif cls == "BindableFunction" then
+            local ok, results = pcall(function() return { inst:Invoke(table.unpack(args)) } end)
+            if not ok then return false, tostring(results) end
+            return true, { returned = flattenArgList(results) }
+        else
+            return false, "invoke requires RemoteFunction or BindableFunction, got " .. cls
+        end
+    else
+        if cls == "RemoteEvent" or cls == "UnreliableRemoteEvent" then
+            local ok, err = pcall(function() inst:FireServer(table.unpack(args)) end)
+            if not ok then return false, tostring(err) end
+        elseif cls == "BindableEvent" then
+            local ok, err = pcall(function() inst:Fire(table.unpack(args)) end)
+            if not ok then return false, tostring(err) end
+        else
+            return false, "not a fireable type: " .. cls
+        end
+        return true, { fired = true, path = instancePath(inst), class = cls }
+    end
+end
+
+local spyEnabled = false
+local spyBuffer = {}
+local spyMax = 200
+local spyHookInstalled = false
+local spyOriginalNamecall = nil
+
+local function installSpyHook()
+    if spyHookInstalled then return true end
+    if not (hookmetamethod_fn and getrawmetatable_fn and newcclosure_fn and getnamecallmethod_fn) then
+        return false, "executor lacks hookmetamethod / getrawmetatable / newcclosure / getnamecallmethod"
+    end
+    local ok, err = pcall(function()
+        spyOriginalNamecall = hookmetamethod_fn(game, "__namecall", newcclosure_fn(function(self, ...)
+            if spyEnabled then
+                local okType = pcall(function() return typeof(self) end)
+                if okType and typeof(self) == "Instance" then
+                    local method = getnamecallmethod_fn()
+                    local cls = self.ClassName
+                    if (method == "FireServer" or method == "InvokeServer"
+                        or method == "Fire" or method == "Invoke"
+                        or method == "fireServer")
+                        and (cls == "RemoteEvent" or cls == "RemoteFunction"
+                             or cls == "BindableEvent" or cls == "BindableFunction"
+                             or cls == "UnreliableRemoteEvent")
+                    then
+                        local args = { ... }
+                        local entry = {
+                            ts = os.time(),
+                            path = self:GetFullName(),
+                            method = method,
+                            class = cls,
+                            args = flattenArgList(args),
+                        }
+                        table.insert(spyBuffer, entry)
+                        if #spyBuffer > spyMax then table.remove(spyBuffer, 1) end
+                    end
+                end
+            end
+            return spyOriginalNamecall(self, ...)
+        end))
+    end)
+    if not ok then return false, "hook failed: " .. tostring(err) end
+    spyHookInstalled = true
+    return true
+end
+
+actions.start_remote_spy = function(msg)
+    spyMax = msg.max_buffer or 200
+    local ok, err = installSpyHook()
+    if not ok then return false, err end
+    spyEnabled = true
+    return true, { enabled = true, max_buffer = spyMax, buffered = #spyBuffer }
+end
+
+actions.stop_remote_spy = function()
+    spyEnabled = false
+    return true, { stopped = true, note = "hook stays installed but is gated; restart with start_remote_spy" }
+end
+
+actions.get_remote_log = function(msg)
+    local limit = msg.limit or 100
+    local filter = msg.path_match and string.lower(msg.path_match) or nil
+    local out = {}
+    local startIdx = math.max(1, #spyBuffer - limit + 1)
+    for i = startIdx, #spyBuffer do
+        local e = spyBuffer[i]
+        if filter then
+            if string.find(string.lower(e.path), filter, 1, true) then table.insert(out, e) end
+        else
+            table.insert(out, e)
+        end
+    end
+    return true, out
+end
+
+actions.clear_remote_log = function()
+    spyBuffer = {}
+    return true, { cleared = true }
+end
+
+actions.snapshot_state = function(msg)
+    local root
+    if msg.root_path and msg.root_path ~= "" then
+        root = resolvePathFull(msg.root_path)
+    else
+        root = Workspace
+    end
+    if not root then return false, "root not found" end
+    local max = msg.max or 2000
+    local out = {}
+    for _, inst in ipairs(root:GetDescendants()) do
+        if #out >= max then break end
+        local entry = { path = instancePath(inst), class = inst.ClassName, name = inst.Name }
+        if inst:IsA("BasePart") then
+            entry.position = vec3(inst.Position)
+        end
+        table.insert(out, entry)
+    end
+    return true, out
+end
+
 actions.describe_view = function(msg)
     local cam = Workspace.CurrentCamera
     if not cam then return false, "no camera" end
@@ -225,6 +495,7 @@ actions.describe_view = function(msg)
     local camPos   = cam.CFrame.Position
     local maxDist  = msg.max_distance or 200
     local maxParts = msg.max_parts or 50
+    local includeUi = msg.include_ui ~= false
 
     local result = {
         camera = {
@@ -236,11 +507,13 @@ actions.describe_view = function(msg)
         },
         players = {},
         nearby_parts = {},
+        ui_visible = {},
     }
 
     for _, p in ipairs(Players:GetPlayers()) do
         local char = p.Character
         local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if hrp then
             local sp, onScreen = cam:WorldToViewportPoint(hrp.Position)
             local dist = (hrp.Position - camPos).Magnitude
@@ -257,6 +530,11 @@ actions.describe_view = function(msg)
                 on_screen = onScreen,
                 occluded  = ray ~= nil,
                 is_local  = p == LocalPlayer,
+                team      = p.Team and p.Team.Name or nil,
+                team_color = p.TeamColor and p.TeamColor.Name or nil,
+                health    = hum and hum.Health or nil,
+                max_health = hum and hum.MaxHealth or nil,
+                tool_equipped = equippedTool(char),
             })
         end
     end
@@ -286,6 +564,30 @@ actions.describe_view = function(msg)
     end
 
     table.sort(result.nearby_parts, function(a, b) return a.distance < b.distance end)
+
+    if includeUi and LocalPlayer then
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            for _, inst in ipairs(pg:GetDescendants()) do
+                if #result.ui_visible >= 40 then break end
+                if (inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox")) and inst.Visible then
+                    local txt = inst.Text
+                    if txt and txt ~= "" then
+                        local pos = inst.AbsolutePosition
+                        local sz = inst.AbsoluteSize
+                        table.insert(result.ui_visible, {
+                            text  = string.sub(txt, 1, 200),
+                            class = inst.ClassName,
+                            path  = instancePath(inst),
+                            pos   = { x = pos.X, y = pos.Y },
+                            size  = { x = sz.X, y = sz.Y },
+                        })
+                    end
+                end
+            end
+        end
+    end
+
     return true, result
 end
 
