@@ -1,0 +1,27 @@
+{
+  "name": "RobloxMCP",
+  "version": "0.1.0",
+  "description": "MCP server that controls Roblox via executor WebSocket bridge",
+  "author": "SkieHacker",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "RobloxMCP": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.2"
+  }
+}
