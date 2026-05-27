@@ -75,7 +75,17 @@ The server stays on `stdio` for MCP and opens `ws://0.0.0.0:8765` for the Roblox
 
 ### 3. Configure your AI client
 
-**Claude Desktop** — edit `%APPDATA%\Claude\claude_desktop_config.json`:
+**Claude Code (CLI / VS Code extension)** — register via the built-in CLI:
+
+```powershell
+claude mcp add roblox node "C:\path\to\RobloxMCP\dist\index.js" --scope user -e ROBLOX_MCP_TOKEN=your-secret-here
+```
+
+> ⚠ On Windows PowerShell, put the positional args (`name`, `command`, `args`) **before** the flags. Putting `--scope` or `-e` first triggers `error: missing required argument 'commandOrUrl'`. Don't use the `--` separator — PowerShell eats it.
+
+Verify with `claude mcp list` — should show `roblox: ... - ✓ Connected`. Then run `/mcp` inside a Claude Code session to confirm the tools are loaded.
+
+**Claude Desktop** — edit `%APPDATA%\Claude\claude_desktop_config.json` (create the file if it doesn't exist — only present once Claude Desktop is installed):
 
 ```json
 {
@@ -89,9 +99,13 @@ The server stays on `stdio` for MCP and opens `ws://0.0.0.0:8765` for the Roblox
 }
 ```
 
+Fully quit Claude Desktop (system tray, not just the window) and reopen.
+
 **Gemini CLI** — edit `~/.gemini/settings.json` with the same shape.
 
 **Cursor / Continue / others** — point to `node` + the absolute path to `dist/index.js`.
+
+> 💡 Only **one** instance of the MCP server can bind WS port `8765` at a time. If you registered the server with an AI client, that client will spawn its own copy on demand — don't also run `node dist/index.js` manually, or the second one will fail with `EADDRINUSE`. Change `ROBLOX_WS_PORT` if you need a non-default port.
 
 ### 4. Launch the Roblox client
 
