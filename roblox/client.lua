@@ -1,6 +1,5 @@
 local WS_URL = "ws://localhost:8767"
 
-----------------------------------------------------------------
 local Players       = game:GetService("Players")
 local Workspace     = game:GetService("Workspace")
 local LogService    = game:GetService("LogService")
@@ -10,9 +9,6 @@ local CaptureService = pcall(function() return game:GetService("CaptureService")
 
 local LocalPlayer = Players.LocalPlayer
 
-----------------------------------------------------------------
--- executor shims
-----------------------------------------------------------------
 local function wsConnect(url)
     if syn and syn.websocket and syn.websocket.connect then return syn.websocket.connect(url) end
     if WebSocket and WebSocket.connect then return WebSocket.connect(url) end
@@ -26,7 +22,6 @@ local isfile_fn    = (rawget(getfenv(), "isfile")    or isfile)
 local getcustomasset_fn = (rawget(getfenv(), "getcustomasset") or getcustomasset or (syn and syn.getcustomasset) or getsynasset)
 
 local function b64encode(data)
-    -- minimal base64
     local b = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     return ((data:gsub('.', function(x)
         local r, byte = '', x:byte()
@@ -40,9 +35,6 @@ local function b64encode(data)
     end) .. ({ '', '==', '=' })[#data % 3 + 1])
 end
 
-----------------------------------------------------------------
--- helpers
-----------------------------------------------------------------
 local function vec3(v) return { x = v.X, y = v.Y, z = v.Z } end
 
 local function findPlayer(name)
@@ -90,9 +82,6 @@ local function hexToColor3(hex)
         tonumber(string.sub(hex,5,6),16) or 0)
 end
 
-----------------------------------------------------------------
--- send shim (set at connect)
-----------------------------------------------------------------
 local currentWs = nil
 local function send(tbl)
     if not currentWs then return end
@@ -105,9 +94,6 @@ local function reply(id, ok, data)
     else      send({ id = id, ok = false, error = tostring(data) }) end
 end
 
-----------------------------------------------------------------
--- actions
-----------------------------------------------------------------
 local actions = {}
 
 actions.exec = function(msg)
@@ -231,9 +217,6 @@ actions.destroy_instance = function(msg)
     return true, { destroyed = path }
 end
 
-----------------------------------------------------------------
--- describe_view: AI vision substitute
-----------------------------------------------------------------
 actions.describe_view = function(msg)
     local cam = Workspace.CurrentCamera
     if not cam then return false, "no camera" end
@@ -306,9 +289,6 @@ actions.describe_view = function(msg)
     return true, result
 end
 
-----------------------------------------------------------------
--- capture_screenshot: best-effort PNG → base64
-----------------------------------------------------------------
 actions.capture_screenshot = function()
     if not CaptureService or not CaptureService.CaptureScreenshot then
         return false, "CaptureService.CaptureScreenshot not available on this client"
@@ -345,9 +325,6 @@ actions.capture_screenshot = function()
     return true, result
 end
 
-----------------------------------------------------------------
--- message dispatch + log forwarding (installed per connection)
-----------------------------------------------------------------
 local logConn = nil
 local function installHandlers(ws)
     ws.OnMessage:Connect(function(raw)
@@ -378,9 +355,6 @@ local function installHandlers(ws)
     end
 end
 
-----------------------------------------------------------------
--- connection loop with exponential backoff
-----------------------------------------------------------------
 local function connectOnce()
     local ok, ws = pcall(wsConnect, WS_URL)
     if not ok or not ws then return nil, tostring(ws) end

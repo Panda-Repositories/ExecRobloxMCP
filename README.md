@@ -29,6 +29,34 @@ The AI gets a clean tool API. The executor handles every privileged action. The 
 
 ---
 
+## Demo
+
+Live, unedited captures of Claude Code driving Roblox through RobloxMCP.
+
+### Walkthrough video
+
+<video src="media/demo-full.mp4" controls width="720"></video>
+
+> If the player doesn't render on your browser, [download / open `media/demo-full.mp4`](media/demo-full.mp4) directly.
+
+### Quick clip
+
+<video src="media/demo-quick.mp4" controls width="720"></video>
+
+> Direct link: [media/demo-quick.mp4](media/demo-quick.mp4).
+
+### Screenshots
+
+**`execute_lua` — printing "Hello, World!" from the AI side:**
+
+![execute_lua hello world](media/01-hello-world.png)
+
+**AI builds an ESP over every entity in the game on request:**
+
+![AI-built ESP highlighting all entities](media/02-esp-demo.png)
+
+---
+
 ## Requirements
 
 - **Node.js** 18+ (for the MCP server)
@@ -100,7 +128,42 @@ Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the com
   ```
   Then fully quit + reopen Claude Desktop (system tray, not just the window).
 
-- **Cursor / Continue / Gemini CLI / others** — point them at the same URL: `http://127.0.0.1:8766/mcp`.
+- **Cursor** — Settings → MCP → Add new MCP server:
+  ```json
+  {
+    "mcpServers": {
+      "roblox": { "url": "http://127.0.0.1:8766/mcp" }
+    }
+  }
+  ```
+  (Or edit `~/.cursor/mcp.json` directly with the same content.) Restart Cursor.
+
+- **Gemini CLI** — edit `~/.gemini/settings.json`:
+  ```json
+  {
+    "mcpServers": {
+      "roblox": { "httpUrl": "http://127.0.0.1:8766/mcp" }
+    }
+  }
+  ```
+  New shells of `gemini` pick it up automatically.
+
+- **OpenAI Codex CLI** — edit `~/.codex/config.toml`:
+  ```toml
+  [mcp_servers.roblox]
+  url = "http://127.0.0.1:8766/mcp"
+  ```
+  Restart `codex`.
+
+- **Continue (VS Code / JetBrains)** — add to `~/.continue/config.json` under `experimental.modelContextProtocolServers`:
+  ```json
+  {
+    "transport": { "type": "streamable-http", "url": "http://127.0.0.1:8766/mcp" }
+  }
+  ```
+  Reload the IDE window.
+
+- **Anything else MCP-compatible** — point it at `http://127.0.0.1:8766/mcp` using whichever HTTP transport key it expects (`url`, `httpUrl`, `endpoint`, etc.). If your client only speaks stdio, see *Advanced: stdio mode* at the bottom.
 
 **3. Inject the Lua client** into Roblox:
 
