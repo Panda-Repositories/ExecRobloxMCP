@@ -9,7 +9,7 @@
 **RobloxMCP** bridges an [MCP](https://modelcontextprotocol.io) server to a running Roblox client via WebSocket. The Roblox side is a single Lua script you run inside an executor (Solara, Potassium, Synapse, etc). Once the script connects back to the local MCP server, your AI assistant can read game state, run arbitrary Lua, see what's on screen, and drive the player — all through a stable tool interface.
 
 ```
-AI (Gemini / Claude / Cursor) <--stdio--> MCP Server <--WebSocket--> Roblox Executor
+AI (Gemini / Claude / Cursor) <--stdio or HTTP--> MCP Server <--WebSocket--> Roblox Executor
 ```
 
 The AI gets a clean tool API. The executor handles every privileged action. The MCP server just routes.
@@ -25,7 +25,7 @@ The AI gets a clean tool API. The executor handles every privileged action. The 
 - **`capture_screenshot`** — viewport → base64 PNG via `CaptureService`. Image content block returned so vision-capable models (Gemini, Claude) see it directly. Falls back to content ID when executor lacks file APIs.
 - **Dev console capture** — all `print` / `warn` / `error` output from the game and the script is mirrored to a ring buffer. AI fetches with `get_dev_console_logs`.
 - **Auto-reconnect** — Lua client reconnects with exponential backoff on drop.
-- **Auth token** — set `ROBLOX_MCP_TOKEN` env so random clients can't hijack the bridge.
+- **Localhost-only** — WS bridge and MCP HTTP endpoint are intended for `127.0.0.1` use. Don't expose the WS port across the network without adding your own auth in front.
 
 ---
 
@@ -52,9 +52,11 @@ For full screenshot-to-base64 support the executor also needs `writefile` + `rea
 
 ---
 
-## How to Run / Use
+## How to Run
 
-### 1. Install + build
+Three windows total: your **server terminal**, your **AI client**, your **Roblox + executor**. Once set up, daily use = just launch the server.
+
+### One-time setup
 
 ```powershell
 cd RobloxMCP
@@ -62,77 +64,95 @@ npm install
 npm run build
 ```
 
-### 2. Start the MCP server
+### Every time you want to use it
+
+**1. Start the server** (in its own PowerShell window — keep it open):
 
 ```powershell
-# optional but recommended: set an auth token
-$env:ROBLOX_MCP_TOKEN = "your-secret-here"
-
-node dist/index.js
+cd "C:\path\to\ExecRobloxMCP"
+node dist/index.js --http
 ```
 
-The server stays on `stdio` for MCP and opens `ws://0.0.0.0:8765` for the Roblox bridge.
+You should see:
 
-### 3. Configure your AI client
-
-**Claude Code (CLI / VS Code extension)** — register via the built-in CLI:
-
-```powershell
-claude mcp add roblox node "C:\path\to\RobloxMCP\dist\index.js" --scope user -e ROBLOX_MCP_TOKEN=your-secret-here
+```
+[bridge] WS listening on ws://0.0.0.0:8765
+[RobloxMCP] HTTP MCP at http://127.0.0.1:8766/mcp (WS bridge port: 8765)
 ```
 
-> ⚠ On Windows PowerShell, put the positional args (`name`, `command`, `args`) **before** the flags. Putting `--scope` or `-e` first triggers `error: missing required argument 'commandOrUrl'`. Don't use the `--` separator — PowerShell eats it.
+Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the command. If you change `ROBLOX_WS_PORT`, also update `WS_URL` at the top of [roblox/client.lua](roblox/client.lua).
 
-Verify with `claude mcp list` — should show `roblox: ... - ✓ Connected`. Then run `/mcp` inside a Claude Code session to confirm the tools are loaded.
+**2. Register with your AI client** (only the first time, or after a config wipe):
 
-**Claude Desktop** — edit `%APPDATA%\Claude\claude_desktop_config.json` (create the file if it doesn't exist — only present once Claude Desktop is installed):
+- **Claude Code** (CLI / VS Code):
+  ```powershell
+  claude mcp add roblox --scope user --transport http http://127.0.0.1:8766/mcp
+  ```
+  Then `/mcp` inside Claude Code to confirm `roblox · √ connected`.
 
-```json
-{
-  "mcpServers": {
-    "RobloxMCP": {
-      "command": "node",
-      "args": ["C:\\path\\to\\RobloxMCP\\dist\\index.js"],
-      "env": { "ROBLOX_MCP_TOKEN": "your-secret-here" }
+- **Claude Desktop** — edit `%APPDATA%\Claude\claude_desktop_config.json`:
+  ```json
+  {
+    "mcpServers": {
+      "RobloxMCP": { "url": "http://127.0.0.1:8766/mcp" }
     }
   }
-}
+  ```
+  Then fully quit + reopen Claude Desktop (system tray, not just the window).
+
+- **Cursor / Continue / Gemini CLI / others** — point them at the same URL: `http://127.0.0.1:8766/mcp`.
+
+**3. Inject the Lua client** into Roblox:
+
+1. Join the Roblox experience you want to control.
+2. Open your executor (Solara, Wave, Krnl, etc).
+3. Paste the contents of [roblox/client.lua](roblox/client.lua) and execute.
+
+Roblox dev console (F9) should show:
 ```
-
-Fully quit Claude Desktop (system tray, not just the window) and reopen.
-
-**Gemini CLI** — edit `~/.gemini/settings.json` with the same shape.
-
-**Cursor / Continue / others** — point to `node` + the absolute path to `dist/index.js`.
-
-> 💡 Only **one** instance of the MCP server can bind WS port `8765` at a time. If you registered the server with an AI client, that client will spawn its own copy on demand — don't also run `node dist/index.js` manually, or the second one will fail with `EADDRINUSE`. Change `ROBLOX_WS_PORT` if you need a non-default port.
-
-### 4. Launch the Roblox client
-
-1. Open `roblox/client.lua`.
-2. If you set a token in step 2, paste the same value into `WS_TOKEN` near the top:
-   ```lua
-   local WS_TOKEN = "your-secret-here"
-   ```
-3. Join the Roblox experience you want to control.
-4. Execute the script in your executor.
-
-Console should print:
-```
+[mcp-bridge] client loaded, connecting…
 [mcp-bridge] connected to ws://localhost:8765
-[mcp-bridge] auth ok
-[mcp-bridge] handlers installed, ready for commands
 ```
 
-### 5. Use it
+Your **server terminal** will also print `[bridge] incoming connection from ::1`.
 
-Ask the AI things like:
+**4. Use it.** Ask your AI anything:
+
 - *"List all players."*
-- *"Teleport me next to PlayerName."*
 - *"What can you see right now?"* (uses `describe_view`)
+- *"Teleport me next to PlayerName."*
 - *"Take a screenshot."*
 - *"Run this Lua: `return Workspace:GetChildren()`"*
 - *"Show me the last 50 dev console errors."*
+
+### Health check
+
+In any shell: `curl http://127.0.0.1:8766/health` → `{"ok":true,"roblox_connected":true|false}`.
+
+### Stopping it
+
+- **Server:** Ctrl+C in the server terminal (or close the window).
+- **Roblox side:** rejoin / re-execute / disconnect — server holds no persistent state.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Server: `EADDRINUSE` | Another node already on 8765/8766 | Kill it: `Get-NetTCPConnection -LocalPort 8766 -State Listen \| %{ taskkill /F /PID $_.OwningProcess }` |
+| AI client says "connection refused" | Server not running | Start the server (step 1) |
+| `/mcp` shows roblox `× failed` | Server crashed or never started | Check the server terminal output |
+| Tool call: "Roblox client not connected" | Lua not running in executor | Re-paste + execute [roblox/client.lua](roblox/client.lua) |
+| Roblox console: `connect failed: ... retry in Xs` | Server not running OR wrong `WS_URL` | Start server, confirm port matches |
+
+### Advanced: stdio mode
+
+Skip step 1 entirely and let your AI client manage the server lifecycle:
+
+```powershell
+claude mcp add roblox node "C:\path\to\ExecRobloxMCP\dist\index.js" --scope user
+```
+
+Tradeoff: when Claude Code closes, the server dies and Roblox disconnects. HTTP mode (above) avoids that.
 
 ---
 

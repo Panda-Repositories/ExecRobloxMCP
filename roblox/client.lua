@@ -1,14 +1,4 @@
---[[
-    RobloxMCP Bridge Client
-    Paste in executor (Solara / Potassium / Synapse / Wave / etc).
-    Make sure MCP server running first (node dist/index.js).
-
-    Auto-reconnects with exponential backoff.
-    If ROBLOX_MCP_TOKEN env was set on the server, paste same value into WS_TOKEN below.
---]]
-
-local WS_URL   = "ws://localhost:8765"
-local WS_TOKEN = ""   -- set to match ROBLOX_MCP_TOKEN; leave "" if server has no token
+local WS_URL = "ws://localhost:8767"
 
 ----------------------------------------------------------------
 local Players       = game:GetService("Players")
@@ -363,12 +353,6 @@ local function installHandlers(ws)
     ws.OnMessage:Connect(function(raw)
         local ok, msg = pcall(HttpService.JSONDecode, HttpService, raw)
         if not ok or type(msg) ~= "table" then return end
-        if msg.event == "auth_ok" then
-            print("[mcp-bridge] auth ok"); return
-        end
-        if msg.event == "auth_failed" then
-            warn("[mcp-bridge] auth FAILED: " .. tostring(msg.error)); return
-        end
         local fn = actions[msg.action]
         if not fn then
             reply(msg.id, false, "unknown action: " .. tostring(msg.action))
@@ -412,11 +396,6 @@ task.spawn(function()
         else
             currentWs = ws
             print("[mcp-bridge] connected to " .. WS_URL)
-
-            if WS_TOKEN ~= "" then
-                local authJson = HttpService:JSONEncode({ action = "auth", token = WS_TOKEN })
-                pcall(function() ws:Send(authJson) end)
-            end
 
             installHandlers(ws)
 

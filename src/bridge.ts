@@ -19,27 +19,17 @@ export class RobloxBridge {
   private pending = new Map<string, PendingReq>();
   private logBuffer: LogEntry[] = [];
   private readonly maxLogs = 500;
-  private readonly token: string | undefined;
 
-  constructor(private port: number, token?: string) {
-    this.token = token && token.length > 0 ? token : undefined;
+  constructor(private port: number) {
     this.wss = new WebSocketServer({ port });
     this.wss.on("connection", (ws, req) => this.onConnect(ws, req?.socket?.remoteAddress));
-    if (this.token) {
-      this.log("info", `[bridge] WS listening on ws://0.0.0.0:${port} (auth required)`);
-    } else {
-      this.log("info", `[bridge] WS listening on ws://0.0.0.0:${port} (NO auth — set ROBLOX_MCP_TOKEN for security)`);
-    }
+    this.log("info", `[bridge] WS listening on ws://0.0.0.0:${port}`);
   }
 
   private onConnect(ws: WebSocket, addr?: string) {
-    let authed = !this.token;
     const remote = addr ?? "unknown";
     this.log("info", `[bridge] incoming connection from ${remote}`);
-
-    if (authed) {
-      this.promoteClient(ws);
-    }
+    this.promoteClient(ws);
 
     ws.on("message", (raw) => {
       let msg: any;
@@ -47,20 +37,6 @@ export class RobloxBridge {
         msg = JSON.parse(raw.toString());
       } catch {
         this.log("error", `[bridge] bad JSON: ${raw.toString().slice(0, 200)}`);
-        return;
-      }
-
-      if (!authed) {
-        if (msg.action === "auth" && this.token && msg.token === this.token) {
-          authed = true;
-          ws.send(JSON.stringify({ event: "auth_ok" }));
-          this.promoteClient(ws);
-          this.log("info", `[bridge] ${remote} authenticated`);
-        } else {
-          ws.send(JSON.stringify({ event: "auth_failed", error: "invalid token" }));
-          this.log("warn", `[bridge] ${remote} failed auth, closing`);
-          ws.close(4001, "auth required");
-        }
         return;
       }
 
