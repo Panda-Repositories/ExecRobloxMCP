@@ -1,4 +1,9 @@
-local WS_URL = "ws://localhost:8767"
+local WS_URLS = {
+    "ws://localhost:8765",
+    "ws://localhost:8767",
+    "ws://127.0.0.1:8765",
+    "ws://127.0.0.1:8767",
+}
 
 local Players       = game:GetService("Players")
 local Workspace     = game:GetService("Workspace")
@@ -657,21 +662,25 @@ local function installHandlers(ws)
     end
 end
 
-local function connectOnce()
-    local ok, ws = pcall(wsConnect, WS_URL)
-    if not ok or not ws then return nil, tostring(ws) end
-    return ws
+local function connectAny()
+    local lastErr = "no candidate urls"
+    for _, url in ipairs(WS_URLS) do
+        local ok, ws = pcall(wsConnect, url)
+        if ok and ws then return ws, url end
+        lastErr = tostring(ws)
+    end
+    return nil, lastErr
 end
 
 task.spawn(function()
     local backoff = 1
     while true do
-        local ws, err = connectOnce()
+        local ws, urlOrErr = connectAny()
         if not ws then
-            warn(("[mcp-bridge] connect failed: %s — retry in %ds"):format(err or "?", backoff))
+            warn(("[mcp-bridge] all ports failed: %s — retry in %ds"):format(urlOrErr or "?", backoff))
         else
             currentWs = ws
-            print("[mcp-bridge] connected to " .. WS_URL)
+            print("[mcp-bridge] connected to " .. urlOrErr)
 
             installHandlers(ws)
 

@@ -129,7 +129,7 @@ You should see:
 [RobloxMCP] HTTP MCP at http://127.0.0.1:8766/mcp (WS bridge port: 8765)
 ```
 
-Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the command. If you change `ROBLOX_WS_PORT`, also update `WS_URL` at the top of [roblox/client.lua](roblox/client.lua).
+Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the command. The Lua client auto-tries ports **8765** and **8767** on both `localhost` and `127.0.0.1`, so default and HTTP-mode setups both work with no edits. If you use a totally custom `ROBLOX_WS_PORT`, add it to the `WS_URLS` list at the top of [roblox/client.lua](roblox/client.lua).
 
 **2. Register with your AI client** (only the first time, or after a config wipe):
 
@@ -230,7 +230,8 @@ In any shell: `curl http://127.0.0.1:8766/health` → `{"ok":true,"roblox_connec
 | AI client says "connection refused" | Server not running | Start the server (step 1) |
 | `/mcp` shows roblox `× failed` | Server crashed or never started | Check the server terminal output |
 | Tool call: "Roblox client not connected" | Lua not running in executor | Re-paste + execute [roblox/client.lua](roblox/client.lua) |
-| Roblox console: `connect failed: ... retry in Xs` | Server not running OR wrong `WS_URL` | Start server, confirm port matches |
+| Roblox console: `all ports failed: ... retry in Xs` | Server not running, or on a non-standard port | Start the server. If using a custom `ROBLOX_WS_PORT`, add that `ws://localhost:<port>` to `WS_URLS` in the Lua |
+| Roblox console: `WebSocket timed out after Ns` | Lua reached a port with nothing listening | Server isn't up on that port — start it (default WS 8765) |
 
 ### Advanced: stdio mode
 
