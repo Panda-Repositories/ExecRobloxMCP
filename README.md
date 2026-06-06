@@ -42,11 +42,22 @@ The AI gets a clean tool API. The executor handles every privileged action. The 
 - **`take_state_snapshot` / `diff_state_from`** — capture flat instance snapshots, diff later: added / removed / moved (>0.01 stud) / reclassed. AI detects events without polling.
 - **`get_dev_console_logs` / `clear_dev_console_logs`** — every `print` / `warn` / `error` from the game and script is mirrored to a ring buffer. AI reads its own errors and self-corrects.
 
+### Multi-client (Desktop + Mobile + multiple sessions, same API key)
+- **`list_my_clients`** — every Roblox client connected with your API key. Returns roblox username, Device (Desktop / Mobile / Tablet / Console / VR), Executor, capabilities, status.
+- Every other tool accepts an optional `client_id` to target a specific device. AI can prompt *"run this on my Delta Android"* or *"test on all clients"*.
+- **`execute_lua_on_all`** — broadcast Lua to every device with your key at once. Returns per-client results so the AI can compare behavior across executors.
+
+### Production / auth
+- **Register & Login** with email + password. Each user gets a default 64-char API key, can create more, revoke any.
+- **MySQL-backed** users, api_keys, login_history (with masked IPs), client_sessions.
+- **Local mode** — if no `DB_HOST` env var, the server runs auth-free single-client (back to v0.2 behavior). Drop a `DB_HOST` in to flip on production mode.
+- **Masked IPs** — last octet of IPv4 / last 2 segments of IPv6 stripped in storage. `localhost` and `::1` stored as `localhost`.
+
 ### Infra
-- **HTTP transport** — persistent Node server that survives AI-client restarts. Stdio transport also supported.
-- **Live dashboard** — `http://127.0.0.1:8766/` shows connection state, recent tool calls, snapshot count, uptime.
-- **Auto-reconnect** — Lua client reconnects with exponential backoff on drop.
-- **Localhost-only** — WS bridge and MCP HTTP endpoint are intended for `127.0.0.1` use. Don't expose the WS port across the network without adding your own auth in front.
+- **HTTP transport** — persistent Node server, survives AI-client restarts. Stdio transport also supported.
+- **Live dashboard** — `/` route. Login + register form, per-user view of connected clients (Roblox ID / Device / Executor / Status table), tool-call log, login history, recent sessions.
+- **Auto-reconnect** — Lua client reconnects with exponential backoff. `Keep_Reconnecting` flag to disable. Bottom-right status pill (dark, animated, Green/Yellow/Red).
+- **Mobile + low-UNC executor support** — Delta Android, low-UNC Wave variants, etc. Graceful capability degradation: tools that need `hookmetamethod` / `decompile` return a clear "not available on this executor" error instead of crashing.
 
 ---
 
@@ -84,6 +95,7 @@ Live, unedited captures of Claude Code driving Roblox through RobloxMCP.
 - **npm**
 - A **Roblox executor** with WebSocket support (see list below)
 - An MCP-compatible AI client (Claude Desktop, Gemini CLI, Cursor, Continue, etc)
+- **MySQL or MariaDB 5.7+** *(production mode only — local mode runs without a DB)*
 
 ---
 
@@ -91,13 +103,21 @@ Live, unedited captures of Claude Code driving Roblox through RobloxMCP.
 
 Any executor that exposes a WebSocket client API. Tested / known-good shims included:
 
-- **Solara** ✅
-- **Potassium** ✅
+### Desktop
+- **Solara** ✅ (full features)
+- **Potassium** ✅ (full features)
 - **Synapse X** (`syn.websocket.connect`) ✅
 - **Krnl** (`Krnl.WebSocket.connect`) ✅
 - **Wave / Velocity / Fluxus / Trigon** — anything exposing global `WebSocket.connect` ✅
 
-For full screenshot-to-base64 support the executor also needs `writefile` + `readfile` + `isfile` (most modern ones do). Without those, `capture_screenshot` returns just the content ID and `describe_view` still works as the vision path.
+### Mobile / low-UNC
+- **Delta Android** ✅ (basic tools; no decompile, no remote spy if `hookmetamethod` missing)
+- **Arceus X / Hydrogen** ✅ (basic tools)
+- Other mobile / low-UNC executors that have `WebSocket.connect` → basic tools work, advanced tools (decompile, remote spy) gracefully report "not available"
+
+The Lua client probes capabilities on connect and reports them to the server. The dashboard and `list_my_clients` show exactly what each device can do.
+
+For full screenshot-to-base64 support the executor also needs `writefile` + `readfile` + `isfile`. Without those, `capture_screenshot` returns just the content ID and `describe_view` still works as the vision path.
 
 ---
 
@@ -105,7 +125,16 @@ For full screenshot-to-base64 support the executor also needs `writefile` + `rea
 
 Three windows total: your **server terminal**, your **AI client**, your **Roblox + executor**. Once set up, daily use = just launch the server.
 
-### One-time setup
+There are two modes:
+
+| Mode | When | Auth | Multi-user | DB |
+|---|---|---|---|---|
+| **Local** | dev / single user / localhost | none | no (single client) | not needed |
+| **Production** | shared server / VPS / public | API key required | yes | MySQL or MariaDB |
+
+Local mode is the default. Set `DB_HOST` to flip on production mode.
+
+### One-time setup (local mode)
 
 ```powershell
 cd RobloxMCP
@@ -113,14 +142,55 @@ npm install
 npm run build
 ```
 
+That's it. Skip the next "production setup" section if you're only running local.
+
+### One-time setup (production mode)
+
+1. Install MySQL or MariaDB. On Windows: download MariaDB MSI from mariadb.org, set a root password during install.
+
+2. Create env vars (PowerShell, per session — or put in a `.env` loader of your choice):
+   ```powershell
+   $env:DB_HOST = "localhost"
+   $env:DB_PORT = "3306"
+   $env:DB_USER = "root"
+   $env:DB_PASS = "yourpassword"
+   $env:DB_NAME = "robloxmcp"
+   ```
+
+3. Create the schema:
+   ```powershell
+   npm install
+   npm run db:setup
+   ```
+
+   This creates the `robloxmcp` database and the `users`, `api_keys`, `login_history`, `client_sessions` tables.
+
+4. Build:
+   ```powershell
+   npm run build
+   ```
+
+5. On a VPS, point a reverse proxy (nginx, Caddy) at the server's HTTP port for TLS. The server itself binds `0.0.0.0` by default — adjust `MCP_HTTP_HOST` and `ROBLOX_WS_HOST` env vars to restrict.
+
 ### Every time you want to use it
 
 **1. Start the server** (in its own PowerShell window — keep it open):
 
+Local mode:
 ```powershell
 cd "C:\path\to\ExecRobloxMCP"
 node dist/index.js --http
 ```
+
+Production mode (same command, with env vars from setup step 2 still set):
+```powershell
+cd "C:\path\to\ExecRobloxMCP"
+node dist/index.js --http
+```
+
+The first log line tells you which mode you're in:
+- `[RobloxMCP] mode: local (no auth)`
+- `[RobloxMCP] mode: production (auth required)`
 
 You should see:
 
@@ -131,7 +201,18 @@ You should see:
 
 Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the command. The Lua client auto-tries ports **8765** and **8767** on both `localhost` and `127.0.0.1`, so default and HTTP-mode setups both work with no edits. If you use a totally custom `ROBLOX_WS_PORT`, add it to the `WS_URLS` list at the top of [roblox/client.lua](roblox/client.lua).
 
+**1.5. Register & grab your API key** *(production mode only)*
+
+Open the dashboard at `http://<server>:8766/` and click **Login / Register**. Sign up with email + password. You'll get back a 64-char API key. Save it — you'll paste it into both the AI client and the Lua. You can also:
+- `curl -X POST http://<server>:8766/auth/register -H 'Content-Type: application/json' -d '{"email":"you@x.com","password":"hunter22hunter22"}'` → returns `{user_id, api_key}`
+- `POST /auth/login` with same body → returns existing API keys
+- `GET /auth/keys` (with `Authorization: Bearer <key>`) → list all your keys
+- `POST /auth/keys` (with auth) → create another labeled key
+- `DELETE /auth/keys/<id>` (with auth) → revoke
+
 **2. Register with your AI client** (only the first time, or after a config wipe):
+
+*Production mode:* append `?api_key=YOUR_KEY` to every URL below, or use the `Authorization: Bearer YOUR_KEY` header where the client supports it. Both work.
 
 - **Claude Code** (CLI / VS Code):
   ```powershell
@@ -188,15 +269,22 @@ Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the com
 
 **3. Inject the Lua client** into Roblox:
 
-1. Join the Roblox experience you want to control.
-2. Open your executor (Solara, Wave, Krnl, etc).
-3. Paste the contents of [roblox/client.lua](roblox/client.lua) and execute.
+1. Open [roblox/client.lua](roblox/client.lua). At the top:
+   ```lua
+   local Client_API = ""            -- paste your API key here (production mode only)
+   local Keep_Reconnecting = true   -- false = give up after first disconnect
+   ```
+   Local mode: leave `Client_API = ""`.
+   Production mode: paste your key.
+2. Join the Roblox experience you want to control.
+3. Open your executor (Solara, Wave, Krnl, Delta Android, etc).
+4. Paste the whole file and execute.
 
-Roblox dev console (F9) should show:
-```
-[mcp-bridge] client loaded, connecting…
-[mcp-bridge] connected to ws://localhost:8765
-```
+You should see two things:
+- **Bottom-right of your Roblox screen**: a dark status pill. Green dot = connected, Yellow = reconnecting, Red = error. The label tells you which device + client_id the server gave you.
+- **Roblox dev console (F9)** also prints `[mcp-bridge] client loaded · Mobile · Delta` and `[mcp-bridge] connected to ws://localhost:8765`.
+
+The same API key can be used on multiple devices simultaneously. Connect Desktop + Mobile at the same time → both show up in `list_my_clients` and the dashboard, and the AI can target either by `client_id`.
 
 Your **server terminal** will also print `[bridge] incoming connection from ::1`.
 
