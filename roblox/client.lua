@@ -1,5 +1,6 @@
 local Client_API = ""
 local Keep_Reconnecting = true
+local Anti_AFK = true
 
 local WS_URLS = {
     "ws://localhost:8765",
@@ -16,6 +17,7 @@ local RunService    = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService  = game:GetService("TweenService")
 local CaptureService = pcall(function() return game:GetService("CaptureService") end) and game:GetService("CaptureService") or nil
+local VirtualUser = pcall(function() return game:GetService("VirtualUser") end) and game:GetService("VirtualUser") or nil
 
 local LocalPlayer = Players.LocalPlayer
 while not LocalPlayer do Players.PlayerAdded:Wait(); LocalPlayer = Players.LocalPlayer end
@@ -94,6 +96,8 @@ local CAPS = {
     getnamecallmethod = getnamecallmethod_fn ~= nil,
     capture_service = CaptureService ~= nil,
     gethui = gethui_fn ~= nil,
+    virtual_user = VirtualUser ~= nil,
+    anti_afk = VirtualUser ~= nil,
 }
 
 local EXECUTOR = detectExecutor()
@@ -341,7 +345,62 @@ end
 pcall(Status.build)
 Status.set("idle", "Starting…")
 
+local antiAfk = {
+    enabled = Anti_AFK and VirtualUser ~= nil,
+    triggers = 0,
+    last_triggered_at = 0,
+    available = VirtualUser ~= nil,
+    connection = nil,
+}
+
+local function startAntiAfk()
+    if antiAfk.connection then return end
+    if not VirtualUser then return end
+    if not LocalPlayer then return end
+    antiAfk.connection = LocalPlayer.Idled:Connect(function()
+        if not antiAfk.enabled then return end
+        local ok = pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+        if ok then
+            antiAfk.triggers = antiAfk.triggers + 1
+            antiAfk.last_triggered_at = os.time()
+            send({ event = "log", level = "info", message = ("[anti-afk] fired (#%d)"):format(antiAfk.triggers) })
+        end
+    end)
+end
+
+local function stopAntiAfk()
+    if antiAfk.connection then antiAfk.connection:Disconnect(); antiAfk.connection = nil end
+end
+
+if antiAfk.enabled then pcall(startAntiAfk) end
+
 local actions = {}
+
+actions.get_anti_afk_status = function()
+    return true, {
+        enabled = antiAfk.enabled,
+        available = antiAfk.available,
+        triggers = antiAfk.triggers,
+        last_triggered_at = antiAfk.last_triggered_at,
+        seconds_since_last_trigger = antiAfk.last_triggered_at > 0 and (os.time() - antiAfk.last_triggered_at) or nil,
+    }
+end
+
+actions.set_anti_afk = function(msg)
+    if not VirtualUser then return false, "VirtualUser not available on this client" end
+    local want = msg.enabled
+    if type(want) ~= "boolean" then return false, "enabled (bool) required" end
+    antiAfk.enabled = want
+    if want then
+        pcall(startAntiAfk)
+    else
+        pcall(stopAntiAfk)
+    end
+    return true, { enabled = antiAfk.enabled }
+end
 
 actions.exec = function(msg)
     local fn, err = loadstring(msg.code)

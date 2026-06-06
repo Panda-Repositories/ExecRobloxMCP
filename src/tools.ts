@@ -385,5 +385,24 @@ export function buildTools(): ToolDef[] {
       inputSchema: z.object({ client_id: ClientIdArg }),
       handler: async (args, ctx) => ctx.bridge.requestOnClient(pick(ctx, args), "capture_screenshot", {}, 15_000),
     },
+
+    {
+      name: "get_anti_afk_status",
+      description:
+        "Check the Roblox 20-minute idle-kick guard on a client. Returns whether it's enabled + available, how many times it has fired this session, and when it last fired. " +
+        "The guard hooks LocalPlayer.Idled and uses VirtualUser to simulate input — same trick every modern executor uses.",
+      inputSchema: z.object({ client_id: ClientIdArg }),
+      handler: async (args, ctx) => ctx.bridge.requestOnClient(pick(ctx, args), "get_anti_afk_status"),
+    },
+
+    {
+      name: "set_anti_afk",
+      description: "Turn the anti-AFK guard on or off on a client at runtime. Default is on (controlled by Anti_AFK at the top of client.lua).",
+      inputSchema: z.object({
+        enabled: z.boolean(),
+        client_id: ClientIdArg,
+      }),
+      handler: async (args, ctx) => ctx.bridge.requestOnClient(pick(ctx, args), "set_anti_afk", { enabled: args.enabled }),
+    },
   ];
 }

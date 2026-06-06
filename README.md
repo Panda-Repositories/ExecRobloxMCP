@@ -4,6 +4,24 @@
 
 ---
 
+## What's new — v0.3.0
+
+| Area | Update |
+|---|---|
+| **Production server** | Optional MySQL-backed mode with email/password accounts, per-user API keys (create / revoke / label), masked-IP login history. Local mode still default — flip on with `DB_HOST` env. |
+| **Multi-client per API key** | Connect Desktop + Mobile + multiple sessions with the same key. AI sees each as a row: `Roblox ID · Device · Executor · Status`. Every tool takes optional `client_id` to target a specific device; `execute_lua_on_all` broadcasts to every device. |
+| **Anti-AFK** | Built-in 20-min idle-kick guard via `LocalPlayer.Idled` + `VirtualUser:ClickButton2`. On by default. Tools `get_anti_afk_status` + `set_anti_afk` for runtime control. |
+| **Mobile / low-UNC executor support** | Delta Android, Arceus X, Hydrogen, etc. Auto-detects device type (Desktop / Mobile / Tablet / Console / VR) and executor. Capability probe on connect — tools that need `hookmetamethod` / `decompile` return clear "not available on this executor" instead of crashing. |
+| **Status pill UI** | Bottom-right dark pill in your Roblox game showing connection state. Green = connected, Yellow = reconnecting, Red = error. Slides in, animates the dot on reconnect. Mobile-safe via `gethui` / CoreGui / PlayerGui fallbacks. |
+| **Client config flags** | `Client_API` (paste API key), `Keep_Reconnecting` (false = give up after first drop), `Anti_AFK` (toggle AFK guard) — all at the top of [roblox/client.lua](roblox/client.lua). |
+| **Dashboard rebuild** | `/` route now has a login/register modal, "connected clients" table, per-user tool log, login history, recent sessions. Dark theme, responsive on mobile. |
+| **Auth on MCP HTTP** | `Authorization: Bearer <key>` header or `?api_key=<key>` query — both supported. Each request is scoped to that user's clients only. |
+| **27 tools total** (was 14 in v0.1) | New: `list_my_clients`, `execute_lua_on_all`, `get_anti_afk_status`, `set_anti_afk`, `decompile_script`, `query_instances`, `list_remotes`, `fire_remote`, `start_remote_spy` / `stop` / `get_remote_log` / `clear`, `dry_run_lua`, `get_recorded_scripts`, `take_state_snapshot`, `diff_state_from`. |
+| **Multi-port auto-discovery** | Lua client tries `ws://localhost:8765`, `:8767`, and the `127.0.0.1` variants in order. No more port-mismatch headaches. |
+| **Live demo** | See videos + screenshots below — Claude Code writing an ESP over every entity in the game, unedited. |
+
+---
+
 ## Introduction
 
 **RobloxMCP** bridges an [MCP](https://modelcontextprotocol.io) server to a running Roblox client via WebSocket. The Roblox side is a single Lua script you run inside an executor (Solara, Potassium, Synapse, etc). Once the script connects back to the local MCP server, your AI assistant can read game state, run arbitrary Lua, see what's on screen, and drive the player — all through a stable tool interface.
@@ -41,6 +59,9 @@ The AI gets a clean tool API. The executor handles every privileged action. The 
 ### Diffing & dev console
 - **`take_state_snapshot` / `diff_state_from`** — capture flat instance snapshots, diff later: added / removed / moved (>0.01 stud) / reclassed. AI detects events without polling.
 - **`get_dev_console_logs` / `clear_dev_console_logs`** — every `print` / `warn` / `error` from the game and script is mirrored to a ring buffer. AI reads its own errors and self-corrects.
+
+### Anti-AFK
+- **20-minute idle-kick guard built in.** Hooks `LocalPlayer.Idled` and uses `VirtualUser:ClickButton2()` to fake input. Toggle at runtime via `set_anti_afk`. Check status / trigger count via `get_anti_afk_status`. Disable per device by setting `Anti_AFK = false` at the top of [roblox/client.lua](roblox/client.lua).
 
 ### Multi-client (Desktop + Mobile + multiple sessions, same API key)
 - **`list_my_clients`** — every Roblox client connected with your API key. Returns roblox username, Device (Desktop / Mobile / Tablet / Console / VR), Executor, capabilities, status.
