@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "dotenv/config";
 import http from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

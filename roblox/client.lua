@@ -1,13 +1,18 @@
-local Client_API = ""
+local Client_API = "b3df6d8ad0d1f314d3eb4f7d4177a0fb172f3c6320d8af89008816225529ade8"
 local Keep_Reconnecting = true
 local Anti_AFK = true
 
-local WS_URLS = {
-    "ws://localhost:8765",
-    "ws://localhost:8767",
-    "ws://127.0.0.1:8765",
-    "ws://127.0.0.1:8767",
-}
+local Server_IP = "10.168.0.100"
+local Server_WS_Ports = { 8765, 8767 }
+
+local WS_URLS = {}
+for _, p in ipairs(Server_WS_Ports) do
+    table.insert(WS_URLS, "ws://" .. Server_IP .. ":" .. p)
+end
+for _, p in ipairs(Server_WS_Ports) do
+    table.insert(WS_URLS, "ws://localhost:" .. p)
+    table.insert(WS_URLS, "ws://127.0.0.1:" .. p)
+end
 
 local Players       = game:GetService("Players")
 local Workspace     = game:GetService("Workspace")
@@ -784,16 +789,51 @@ actions.capture_screenshot = function()
     return true, result
 end
 
+local LEVEL_MAP = {
+    [Enum.MessageType.MessageOutput]  = "info",
+    [Enum.MessageType.MessageInfo]    = "info",
+    [Enum.MessageType.MessageWarning] = "warn",
+    [Enum.MessageType.MessageError]   = "error",
+}
+
 local logConn = nil
+local authConfirmed = false
+
+local function attachLogStream()
+    if logConn then logConn:Disconnect() end
+    logConn = LogService.MessageOut:Connect(function(message, msgType)
+        send({ event = "log", level = LEVEL_MAP[msgType] or "info", message = message })
+    end)
+end
+
+local heartbeatToken = 0
+
+local function startHeartbeat(ws)
+    heartbeatToken = heartbeatToken + 1
+    local myToken = heartbeatToken
+    task.spawn(function()
+        while currentWs == ws and heartbeatToken == myToken do
+            task.wait(10)
+            if currentWs == ws and heartbeatToken == myToken then
+                send({ event = "ping", ts = os.time() })
+            end
+        end
+    end)
+end
+
 local function installHandlers(ws)
     ws.OnMessage:Connect(function(raw)
         local ok, msg = pcall(HttpService.JSONDecode, HttpService, raw)
         if not ok or type(msg) ~= "table" then return end
         if msg.event == "auth_ok" then
+            authConfirmed = true
             Status.set("connected", (msg.mode == "production" and "Auth OK · " or "Local · ") .. tostring(msg.client_id or "?"):sub(1, 12))
+            attachLogStream()
+            startHeartbeat(ws)
             return
         end
         if msg.event == "auth_failed" then
+            authConfirmed = false
             Status.set("error", "Auth FAILED: " .. tostring(msg.error or "?"))
             return
         end
@@ -803,20 +843,6 @@ local function installHandlers(ws)
         if not success then reply(msg.id, false, "runtime: " .. tostring(result))
         else reply(msg.id, result, payload) end
     end)
-
-    if logConn then logConn:Disconnect() end
-    local LEVEL_MAP = {
-        [Enum.MessageType.MessageOutput]  = "info",
-        [Enum.MessageType.MessageInfo]    = "info",
-        [Enum.MessageType.MessageWarning] = "warn",
-        [Enum.MessageType.MessageError]   = "error",
-    }
-    logConn = LogService.MessageOut:Connect(function(message, msgType)
-        send({ event = "log", level = LEVEL_MAP[msgType] or "info", message = message })
-    end)
-    for _, entry in ipairs(LogService:GetLogHistory()) do
-        send({ event = "log", level = LEVEL_MAP[entry.messageType] or "info", message = entry.message })
-    end
 end
 
 local function connectAny()
@@ -857,17 +883,33 @@ task.spawn(function()
             end
         else
             currentWs = ws
-            Status.set("reconnecting", "Authenticating…")
+            authConfirmed = false
             print("[mcp-bridge] connected to " .. urlOrErr)
-            sendAuth()
+            Status.set("reconnecting", "Authenticating…")
             installHandlers(ws)
+            task.wait(0.1)
+            sendAuth()
             local closed = false
             ws.OnClose:Connect(function() closed = true end)
-            while not closed do task.wait(0.5) end
+            local handshakeDeadline = tick() + 6
+            while not closed do
+                task.wait(0.5)
+                if not authConfirmed and tick() > handshakeDeadline then
+                    Status.set("error", "No auth_ok in 6s · closing")
+                    pcall(function() ws:Close() end)
+                    closed = true
+                end
+            end
             currentWs = nil
-            Status.set("reconnecting", "Lost connection · retrying")
-            warn("[mcp-bridge] disconnected")
-            backoff = 1
+            if logConn then logConn:Disconnect(); logConn = nil end
+            if authConfirmed then
+                Status.set("reconnecting", "Lost connection · retrying")
+                warn("[mcp-bridge] disconnected after auth")
+                backoff = 2
+            else
+                Status.set("error", "Auth not confirmed · backing off")
+                warn("[mcp-bridge] disconnected before auth confirmed · backoff " .. backoff)
+            end
             if not Keep_Reconnecting then
                 Status.set("error", "Stopped (Keep_Reconnecting=false)")
                 return

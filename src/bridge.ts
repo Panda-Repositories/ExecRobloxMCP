@@ -25,11 +25,40 @@ export class RobloxBridge {
     this.wss = new WebSocketServer({ port, host });
     this.wss.on("connection", (ws, req) => this.onConnect(ws, req?.socket?.remoteAddress));
     this.log("info", `[bridge] WS listening on ws://${host}:${port}${this.requireAuth ? " (auth required)" : " (local mode)"}`, null);
+    this.startHeartbeat();
+  }
+
+  private startHeartbeat() {
+    const PING_INTERVAL = 20_000;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      this.wss.clients.forEach((rawWs) => {
+        const w = rawWs as any;
+        if (w.isAlive === false) {
+          const c = this.findClientByWs(rawWs as WebSocket);
+          const cid = c ? c.client_id : "(pre-auth)";
+          this.log("warn", `[bridge] client ${cid} unresponsive — terminating`, c?.user_id ?? null);
+          try { (rawWs as WebSocket).terminate(); } catch {}
+          return;
+        }
+        w.isAlive = false;
+        try { (rawWs as WebSocket).ping(); } catch {}
+      });
+    }, PING_INTERVAL);
+    this.wss.on("close", () => clearInterval(interval));
+  }
+
+  private findClientByWs(ws: WebSocket) {
+    for (const c of this.registry.listAll()) if (c.ws === ws) return c;
+    return undefined;
   }
 
   private async onConnect(ws: WebSocket, addr?: string) {
     const remote = maskIp(addr);
     this.log("info", `[bridge] incoming connection from ${remote}`, null);
+
+    (ws as any).isAlive = true;
+    ws.on("pong", () => { (ws as any).isAlive = true; });
 
     let authed = !this.requireAuth;
     let clientInfo: ClientInfo | null = null;
@@ -46,9 +75,11 @@ export class RobloxBridge {
     }
 
     ws.on("message", async (raw) => {
+      (ws as any).isAlive = true;
       let msg: any;
       try { msg = JSON.parse(raw.toString()); }
       catch { this.log("error", `[bridge] bad JSON from ${remote}`, null); return; }
+      if (msg.event === "ping") return;
 
       if (!authed) {
         if (msg.action !== "auth") {

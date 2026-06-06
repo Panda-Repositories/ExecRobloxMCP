@@ -220,7 +220,17 @@ You should see:
 [RobloxMCP] HTTP MCP at http://127.0.0.1:8766/mcp (WS bridge port: 8765)
 ```
 
-Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the command. The Lua client auto-tries ports **8765** and **8767** on both `localhost` and `127.0.0.1`, so default and HTTP-mode setups both work with no edits. If you use a totally custom `ROBLOX_WS_PORT`, add it to the `WS_URLS` list at the top of [roblox/client.lua](roblox/client.lua).
+Want different ports? Set `MCP_HTTP_PORT` and/or `ROBLOX_WS_PORT` before the command. The Lua client auto-tries ports **8765** and **8767** on both your `Server_IP` and `localhost` / `127.0.0.1`, so default and HTTP-mode setups both work. If you use a totally custom port, add it to `Server_WS_Ports` at the top of [roblox/client.lua](roblox/client.lua).
+
+**Bindings (defaults):**
+- HTTP MCP: `0.0.0.0:8766` — reachable from any LAN device. Override with `MCP_HTTP_HOST=127.0.0.1` to lock to localhost.
+- WS bridge: `0.0.0.0:8765` — reachable from any LAN device. Override with `ROBLOX_WS_HOST=127.0.0.1`.
+
+**Windows Firewall** — if it's on, allow incoming TCP on 8765 + 8766 once (PowerShell as Admin):
+```powershell
+New-NetFirewallRule -DisplayName "RobloxMCP WS"   -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow
+New-NetFirewallRule -DisplayName "RobloxMCP HTTP" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow
+```
 
 **1.5. Register & grab your API key** *(production mode only)*
 
@@ -294,9 +304,15 @@ Open the dashboard at `http://<server>:8766/` and click **Login / Register**. Si
    ```lua
    local Client_API = ""            -- paste your API key here (production mode only)
    local Keep_Reconnecting = true   -- false = give up after first disconnect
+   local Anti_AFK = true            -- false to disable 20-min idle-kick guard
+   local Server_IP = "10.168.0.100" -- PC LAN IP. "localhost" for same-PC executors. Mobile / MuMu / BlueStacks / LDPlayer = your PC's LAN IPv4.
+   local Server_WS_Ports = { 8765, 8767 }
    ```
-   Local mode: leave `Client_API = ""`.
-   Production mode: paste your key.
+   - **Same PC** (running executor on your dev machine): set `Server_IP = "localhost"`.
+   - **MuMu / BlueStacks / LDPlayer / Android emulator on same PC**: keep `Server_IP` as your LAN IPv4 (run `ipconfig` in PowerShell, look for `IPv4 Address` under your WiFi / Ethernet adapter).
+   - **Physical phone on same WiFi**: same — use your PC's LAN IPv4. Both devices must be on the same network.
+   - **VPS / remote server**: use the server's public IP or domain.
+   The client tries `Server_IP` first, then falls back to `localhost`/`127.0.0.1`, so you can leave a LAN IP in even when running locally.
 2. Join the Roblox experience you want to control.
 3. Open your executor (Solara, Wave, Krnl, Delta Android, etc).
 4. Paste the whole file and execute.
